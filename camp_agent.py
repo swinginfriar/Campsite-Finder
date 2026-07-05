@@ -880,7 +880,7 @@ def render_html(status):
 </style></head>
 <body>
 <header>
-  <h1>🏕️ CampSage <a href="/camp/map" style="font-size:14px;font-weight:600;color:#7fd1a8;text-decoration:none;vertical-align:middle;margin-left:6px;padding:3px 10px;border:1px solid #2e7d5b;border-radius:16px">🗺️ Map</a></h1>
+  <h1>🏕️ CampSage <a href="/camp/map" style="font-size:14px;font-weight:600;color:#7fd1a8;text-decoration:none;vertical-align:middle;margin-left:6px;padding:3px 10px;border:1px solid #2e7d5b;border-radius:16px">🗺️ Map</a> <a href="/camp/settings" style="font-size:14px;font-weight:600;color:#7fd1a8;text-decoration:none;vertical-align:middle;margin-left:4px;padding:3px 10px;border:1px solid #2e7d5b;border-radius:16px">⚙️ Settings</a></h1>
   <div class="sub">Great California campsites · 2–3 nights at one spot · closest to {esc(status['home'])}</div>
   <div class="stamp">Updated {esc(status['generated_at'])} · {esc(cnt_line)}</div>
   {err_line}

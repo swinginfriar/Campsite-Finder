@@ -18,32 +18,33 @@ link, and **Directions**.
 
 ## Run with Docker (Dockhand / Portainer / plain compose)
 Clone the repo into your Dockhand instance and bring the stack up — no host Python, no cron, no
-API keys:
+API keys, **and no environment variables to configure**:
 ```bash
-docker compose up -d --build      # then open http://<host>:5001/camp  (and /camp/map)
+docker compose up -d --build      # then open http://<host>:5001/camp
 ```
 Two services share one image and a persistent `campsage-data` volume:
-- **`web`** — serves the phone page + map on port **5001** (remap the left side of `"5001:5001"` in
-  `docker-compose.yml` to change the host port).
-- **`scanner`** — runs the scan on start and every `CAMPSAGE_SCAN_INTERVAL_HOURS` (default 6),
-  replacing the cron. Writes `status.json` / `dashboard.html` to the volume that `web` reads.
+- **`web`** — serves the phone page, map, and settings on port **5001** (remap the left side of
+  `"5001:5001"` in `docker-compose.yml` to change the host port).
+- **`scanner`** — runs the scan on start and re-runs on the interval you set, replacing the cron.
+  Writes `status.json` / `dashboard.html` to the volume that `web` reads.
 
-**Configuration** is all via environment variables — set them in Dockhand's UI, in the compose
-`environment:` block, or copy `.env.example` → `.env`. The common ones:
+### Configure everything in the browser — no env vars
+Open **`/camp/settings`** (linked from the top of the list, map, and placeholder pages) to set your
+home base, search radius, rating bars, search window, weekends-only, scan interval, and photo
+fetching. Settings are saved to `settings.json` on the `campsage-data` volume, and the scanner picks
+them up on its next run. Hit **Save & scan now** to kick a fresh scan within a few seconds instead of
+waiting out the interval.
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `CAMPSAGE_HOME_NAME` / `CAMPSAGE_HOME_LAT` / `CAMPSAGE_HOME_LNG` | Los Angeles / 34.0522 / -118.2437 | Where "closest" is measured from |
-| `CAMPSAGE_MAX_DISTANCE_MI` | 150 | Drop anything farther than this |
-| `CAMPSAGE_MIN_RATING` / `CAMPSAGE_MIN_REVIEWS` | 4.0 / 4 | Review bars for "good spots" |
-| `CAMPSAGE_WINDOW_DAYS` | 60 | How many days out to search |
-| `CAMPSAGE_WEEKENDS_ONLY` | false | Only blocks including a Fri/Sat night |
-| `CAMPSAGE_SCAN_INTERVAL_HOURS` | 6 | How often the scanner re-runs |
-| `CAMPSAGE_FETCH_IMAGES` | true | Also pull Wikimedia beach/park photos each scan |
-| `CAMPSAGE_DATA_DIR` | `/data` (in Docker) | Where scan output/caches live |
+Ships with sensible Los Angeles defaults, so it boots and works with **zero configuration** — just
+open Settings and change the home base to yours.
 
-The scanner's first run takes a couple minutes; until it finishes `/camp` shows a "hasn't run yet"
-placeholder. `docker compose logs -f scanner` shows scan progress.
+The scanner's first run takes a couple minutes; until it finishes `/camp` shows a placeholder with a
+link to Settings. `docker compose logs -f scanner` shows scan progress.
+
+### The one bootstrap variable (you don't set it)
+The image bakes in `CAMPSAGE_DATA_DIR=/data` so the app knows where the volume is mounted. It's
+infrastructure, set on the image — not something you configure. (For a plain local run outside Docker
+it's unset and defaults to `~/campsage`.) Everything a user would actually tune lives in the UI.
 
 ## The map (`/camp/map`)
 Interactive Leaflet map (OpenStreetMap tiles, **no key**) of every open site — filter by

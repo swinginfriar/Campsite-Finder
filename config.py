@@ -5,62 +5,123 @@ A small, dependency-free agent that hunts recreation.gov for great California
 campsites with 2-3 consecutive nights open at the SAME site, ranked closest-first
 among well-reviewed spots, and publishes a phone-friendly status page.
 
-Everything tunable lives here. Edit + re-run camp_agent.py (or wait for cron).
+Settings model
+──────────────
+Everyday knobs (home base, radius, rating bars, window, scan interval …) are
+edited in the web UI at **/camp/settings** and persisted to
+``<DATA_DIR>/settings.json`` on the data volume — so a Docker/Dockhand user
+configures NOTHING via environment variables.
+
+The ONLY environment variable is a bootstrap one: ``CAMPSAGE_DATA_DIR`` tells
+the app where the volume is mounted (baked into the image as ``/data``; unset
+falls back to ``~/campsage`` for a plain local run). Everything else below that
+isn't in ``SETTINGS_SPEC`` is an advanced constant edited in this file.
 """
+import json
 import os
 from pathlib import Path
 
 
-# ── Environment overrides ─────────────────────────────────────────────────────
-# Every knob below can be set from the environment (e.g. Docker / Dockhand's UI)
-# without editing this file. If a var is unset, the hard-coded default is used —
-# so local `python3 camp_agent.py` behaves exactly as before.
-def _env_str(name, default):
-    v = os.environ.get(name)
-    return v if v not in (None, "") else default
+# ── Bootstrap (infra) — the one env var, set on the image, not by the user ────
+DATA_DIR      = Path(os.environ.get("CAMPSAGE_DATA_DIR") or (Path.home() / "campsage"))
+SETTINGS_FILE = DATA_DIR / "settings.json"
 
 
-def _env_float(name, default):
+# ── UI-editable settings ──────────────────────────────────────────────────────
+# Single source of truth for both the defaults AND the settings form. Each entry:
+#   key    — the module-level name camp_agent/scheduler read (e.g. config.HOME_LAT)
+#   type   — "str" | "int" | "float" | "bool" (drives coercion + the form widget)
+#   label/help — shown on /camp/settings
+SETTINGS_SPEC = [
+    {"key": "HOME_NAME", "type": "str", "default": "Los Angeles",
+     "label": "Home name", "help": "Shown on the page; where 'closest' is measured from."},
+    {"key": "HOME_LAT", "type": "float", "default": 34.0522,
+     "label": "Home latitude", "help": "Decimal degrees, e.g. 34.0522."},
+    {"key": "HOME_LNG", "type": "float", "default": -118.2437,
+     "label": "Home longitude", "help": "Decimal degrees, e.g. -118.2437."},
+    {"key": "SEARCH_RADIUS_MI", "type": "int", "default": 150,
+     "label": "Search radius (mi)", "help": "recreation.gov search radius."},
+    {"key": "MAX_DISTANCE_MI", "type": "int", "default": 150,
+     "label": "Max distance (mi)", "help": "Hard cap — drop anything farther than this."},
+    {"key": "MIN_RATING", "type": "float", "default": 4.0,
+     "label": "Min rating", "help": "Only 'good reviews' — average stars ≥ this."},
+    {"key": "MIN_REVIEWS", "type": "int", "default": 4,
+     "label": "Min reviews", "help": "…backed by at least this many ratings."},
+    {"key": "WINDOW_DAYS", "type": "int", "default": 60,
+     "label": "Search window (days)", "help": "How many days out from today to search."},
+    {"key": "WEEKENDS_ONLY", "type": "bool", "default": False,
+     "label": "Weekends only", "help": "Only blocks that include a Fri or Sat night."},
+    {"key": "SCAN_INTERVAL_HOURS", "type": "float", "default": 6.0,
+     "label": "Scan interval (hours)", "help": "How often the scanner re-runs."},
+    {"key": "FETCH_IMAGES", "type": "bool", "default": True,
+     "label": "Fetch photos", "help": "Also pull Wikimedia beach/park photos each scan."},
+]
+DEFAULTS = {s["key"]: s["default"] for s in SETTINGS_SPEC}
+_SPEC_BY_KEY = {s["key"]: s for s in SETTINGS_SPEC}
+
+
+def _coerce(spec, value):
+    """Coerce a raw value (str from a form, or JSON) to the setting's type."""
+    t = spec["type"]
     try:
-        return float(_env_str(name, default))
+        if t == "bool":
+            if isinstance(value, bool):
+                return value
+            return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+        if t == "int":
+            return int(float(value))
+        if t == "float":
+            return float(value)
+        return str(value)
     except (TypeError, ValueError):
-        return default
+        return spec["default"]
 
 
-def _env_int(name, default):
+def load_settings():
+    """Merge saved settings.json over the defaults. Missing/broken → defaults."""
+    data = dict(DEFAULTS)
     try:
-        return int(float(_env_str(name, default)))
-    except (TypeError, ValueError):
-        return default
+        if SETTINGS_FILE.exists():
+            saved = json.loads(SETTINGS_FILE.read_text())
+            for key, spec in _SPEC_BY_KEY.items():
+                if key in saved and saved[key] is not None:
+                    data[key] = _coerce(spec, saved[key])
+    except Exception:
+        pass
+    return data
 
 
-def _env_bool(name, default):
-    v = os.environ.get(name)
-    if v in (None, ""):
-        return default
-    return v.strip().lower() in ("1", "true", "yes", "y", "on")
+def save_settings(raw):
+    """Coerce + persist a dict of {key: value} to settings.json, then reload()."""
+    cleaned = {}
+    for key, spec in _SPEC_BY_KEY.items():
+        if key in raw:
+            cleaned[key] = _coerce(spec, raw[key])
+    merged = dict(load_settings())
+    merged.update(cleaned)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(merged, indent=2))
+    reload()
+    return merged
 
 
-# ── Where "closest" is measured from (home base for drive distance) ───────────
-HOME_NAME = _env_str("CAMPSAGE_HOME_NAME", "Los Angeles")
-HOME_LAT  = _env_float("CAMPSAGE_HOME_LAT", 34.0522)
-HOME_LNG  = _env_float("CAMPSAGE_HOME_LNG", -118.2437)
+def reload():
+    """Re-read settings.json and publish each value as a module global.
 
-# ── How far you'll drive + how good a spot has to be ──────────────────────────
-SEARCH_RADIUS_MI = _env_int("CAMPSAGE_SEARCH_RADIUS_MI", 150)   # recreation.gov search radius (miles)
-MAX_DISTANCE_MI  = _env_int("CAMPSAGE_MAX_DISTANCE_MI", 150)    # hard cap: drop anything farther than this
-MIN_RATING       = _env_float("CAMPSAGE_MIN_RATING", 4.0)       # only "good reviews" — average stars >= this
-MIN_REVIEWS      = _env_int("CAMPSAGE_MIN_REVIEWS", 4)          # ...backed by at least this many ratings (signal, not noise)
+    camp_agent / reservecalifornia read these as ``config.X`` at call time, so a
+    long-running scanner picks up UI edits the moment it calls reload() again.
+    """
+    for key, value in load_settings().items():
+        globals()[key] = value
 
+
+# ── Advanced constants (edit here, not in the UI) ─────────────────────────────
 # A second, lower bar so genuinely great but lightly-reviewed gems still surface,
-# clearly flagged as "few reviews". Set EQUAL to the above to disable the tier.
+# clearly flagged as "few reviews". Set EQUAL to MIN_* to disable the tier.
 SOFT_MIN_RATING  = 4.5      # a 4.5★+ spot with only a couple reviews can still show
 SOFT_MIN_REVIEWS = 1
 
-# ── The trip you want ─────────────────────────────────────────────────────────
-WINDOW_DAYS   = _env_int("CAMPSAGE_WINDOW_DAYS", 60)   # search this many days out from today
 NIGHTS        = [3, 2]      # acceptable consecutive-night blocks (prefer 3, accept 2)
-WEEKENDS_ONLY = _env_bool("CAMPSAGE_WEEKENDS_ONLY", False)   # True => only blocks that include a Fri or Sat night
 
 # ── Beach section (MAINLAND drive-up state beaches via ReserveCalifornia) ─────
 # These are the iconic CA ocean beach campgrounds (Leo Carrillo, San Onofre, Carpinteria,
@@ -128,14 +189,12 @@ STATE_PARK_PER_ANCHOR  = 6      # nearest campable state parks kept per region (
 STATE_PARK_MAX_ANALYZE = 45     # global cap on parks we fetch availability for (API budget)
 
 # ── Plumbing ──────────────────────────────────────────────────────────────────
-# Where scan output/caches live. In Docker this is set to a mounted volume
-# (CAMPSAGE_DATA_DIR=/data). Unset → the original ~/campsage location.
-DATA_DIR      = Path(_env_str("CAMPSAGE_DATA_DIR", str(Path.home() / "campsage")))
 STATUS_JSON   = DATA_DIR / "status.json"
 DASHBOARD_HTML= DATA_DIR / "dashboard.html"
 TIPS_JSON     = DATA_DIR / "booking_tips.json"   # written by ai_concierge.sh (subscription)
 HEALTH_JSON   = DATA_DIR / "health.json"          # written by campsage_doctor.sh (subscription)
 LOG_FILE      = DATA_DIR / "campsage.log"
+RESCAN_REQUEST = DATA_DIR / "rescan.request"      # web writes this; scanner scans now + deletes it
 
 # Browser-like UA — recreation.gov's public JSON endpoints answer these; a bare
 # python UA can get an HTML interstitial or a block.
@@ -145,3 +204,7 @@ USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
 HTTP_TIMEOUT  = 30
 MAX_WORKERS   = 8           # parallel availability fetches (be polite)
 RETRIES       = 3
+
+
+# Publish the UI-editable settings as module globals on import.
+reload()

@@ -4,10 +4,11 @@ campsage_web.py — standalone web UI for CampSage. Serves the phone status page
 map (Leaflet + OpenStreetMap, no API keys). Reads the scan output that camp_agent.py writes to
 DATA_DIR. Run:  python campsage_web.py   (then open http://localhost:5001/camp)
 """
+import html
 import json
 import os
 from pathlib import Path
-from flask import Flask, jsonify, Response
+from flask import Flask, jsonify, Response, request, redirect
 
 import config
 
@@ -32,7 +33,9 @@ def camp_page():
     if f.exists():
         return f.read_text()
     return ("<body style='font:16px sans-serif;padding:40px'>CampSage hasn't run yet \u2014 "
-            "run camp_agent.py first.</body>", 200)
+            "the scanner is working on the first scan (a couple minutes). "
+            "Meanwhile, set your home base and search options in "
+            "<a href='/camp/settings'>Settings</a>.</body>", 200)
 
 
 @app.route("/camp/data")
@@ -109,7 +112,7 @@ _CAMP_MAP_HTML = """<!DOCTYPE html><html lang="en"><head>
     padding:8px 10px;border-radius:8px;font-size:12px;z-index:1000;line-height:1.7}
   .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
 </style></head><body>
-<div class="bar"><a href="/camp">← List</a><b>🏕️ CampSage Map</b><span class="muted" id="count">__N__ shown</span></div>
+<div class="bar"><a href="/camp">← List</a><b>🏕️ CampSage Map</b><a href="/camp/settings" style="margin-left:auto">⚙️ Settings</a><span class="muted" id="count">__N__ shown</span></div>
 <div class="filters" id="filters">
   <span class="chip active" data-f="type" data-v="all">All</span>
   <span class="chip" data-f="type" data-v="camp">🏕️ Camp</span>
@@ -219,6 +222,98 @@ document.querySelectorAll('.chip[data-t]').forEach(c => c.addEventListener('clic
 rsel.addEventListener('change', () => { state.region=rsel.value; apply(); });
 apply();
 </script></body></html>"""
+
+
+@app.route("/camp/settings", methods=["GET", "POST"])
+def camp_settings():
+    """Edit every everyday knob in the browser — persisted to settings.json on
+    the data volume, so nothing needs to be configured via env vars."""
+    msg = ""
+    if request.method == "POST":
+        submitted = {s["key"]: request.form.get(s["key"]) for s in config.SETTINGS_SPEC}
+        # Unchecked checkboxes don't appear in the form — treat absence as false.
+        for s in config.SETTINGS_SPEC:
+            if s["type"] == "bool":
+                submitted[s["key"]] = request.form.get(s["key"]) is not None
+        try:
+            config.save_settings(submitted)
+            if request.form.get("scan_now"):
+                try:
+                    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+                    config.RESCAN_REQUEST.write_text("1")
+                    msg = "Saved — a fresh scan will start within a few seconds."
+                except Exception:
+                    msg = "Saved. (Couldn't signal the scanner; it applies on the next scan.)"
+            else:
+                msg = "Saved — applies on the next scan."
+        except Exception as e:
+            msg = f"Could not save: {e}"
+        return redirect(f"/camp/settings?msg={html.escape(msg)}")
+
+    msg = request.args.get("msg", "")
+    current = config.load_settings()
+    rows = []
+    for s in config.SETTINGS_SPEC:
+        key, val = s["key"], current[s["key"]]
+        label = html.escape(s["label"])
+        helptext = html.escape(s.get("help", ""))
+        if s["type"] == "bool":
+            checked = "checked" if val else ""
+            field = (f"<label class='switch'><input type='checkbox' name='{key}' {checked}>"
+                     f"<span>Enabled</span></label>")
+        else:
+            step = "any" if s["type"] == "float" else "1"
+            typ = "text" if s["type"] == "str" else "number"
+            stepattr = "" if s["type"] == "str" else f"step='{step}'"
+            field = (f"<input type='{typ}' {stepattr} name='{key}' "
+                     f"value='{html.escape(str(val))}'>")
+        rows.append(f"<div class='row'><label class='lbl'>{label}</label>{field}"
+                    f"<div class='help'>{helptext}</div></div>")
+    banner = f"<div class='banner'>{html.escape(msg)}</div>" if msg else ""
+    return Response(_SETTINGS_HTML.replace("__ROWS__", "".join(rows))
+                    .replace("__BANNER__", banner), mimetype="text/html")
+
+
+_SETTINGS_HTML = """<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CampSage — Settings</title>
+<style>
+  :root{color-scheme:dark}
+  body{margin:0;background:#0f1411;color:#e7efe9;font-family:-apple-system,system-ui,sans-serif;
+    padding:0 0 60px}
+  .bar{position:sticky;top:0;background:#0f1411;display:flex;align-items:center;gap:12px;
+    padding:14px 16px;box-shadow:0 1px 6px rgba(0,0,0,.5);z-index:10}
+  .bar a{color:#7fd1a8;text-decoration:none;font-weight:600}
+  .bar b{font-size:16px}
+  .wrap{max-width:560px;margin:0 auto;padding:8px 16px}
+  .banner{background:#1c3a2b;color:#7fd1a8;border:1px solid #2e7d5b;border-radius:8px;
+    padding:10px 12px;margin:14px 0;font-size:14px}
+  .row{padding:14px 0;border-bottom:1px solid #1c2a22}
+  .lbl{display:block;font-weight:600;font-size:14px;margin-bottom:6px}
+  input[type=text],input[type=number]{width:100%;box-sizing:border-box;background:#13201a;
+    color:#e7efe9;border:1px solid #24382c;border-radius:8px;padding:9px 11px;font-size:15px}
+  input:focus{outline:none;border-color:#2e7d5b}
+  .help{color:#8ba398;font-size:12px;margin-top:5px}
+  .switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:14px}
+  .switch input{width:18px;height:18px;accent-color:#2e7d5b}
+  .actions{position:sticky;bottom:0;background:#0f1411;padding:16px 0 6px;
+    display:flex;gap:10px;flex-wrap:wrap;box-shadow:0 -1px 6px rgba(0,0,0,.5)}
+  button{border:none;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:600;cursor:pointer}
+  .primary{background:#2e7d5b;color:#fff}
+  .ghost{background:#13201a;color:#e7efe9;border:1px solid #24382c}
+</style></head><body>
+<div class="bar"><a href="/camp">← List</a><b>⚙️ CampSage Settings</b>
+  <a href="/camp/map" style="margin-left:auto">🗺️ Map</a></div>
+<form method="post" class="wrap">
+  __BANNER__
+  <p class="help">These are stored on the data volume (settings.json) and read by the
+     scanner on its next run. No environment variables to configure.</p>
+  __ROWS__
+  <div class="actions">
+    <button class="primary" type="submit" name="scan_now" value="1">Save &amp; scan now</button>
+    <button class="ghost" type="submit">Save</button>
+  </div>
+</form></body></html>"""
 
 
 if __name__ == "__main__":
