@@ -5,6 +5,7 @@ map (Leaflet + OpenStreetMap, no API keys). Reads the scan output that camp_agen
 DATA_DIR. Run:  python campsage_web.py   (then open http://localhost:5001/camp)
 """
 import json
+import os
 from pathlib import Path
 from flask import Flask, jsonify, Response
 
@@ -221,4 +222,6 @@ apply();
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001, debug=False)
+    host = os.environ.get("CAMPSAGE_WEB_HOST", "0.0.0.0")
+    port = int(os.environ.get("CAMPSAGE_WEB_PORT", "5001"))
+    app.run(host=host, port=port, debug=False)

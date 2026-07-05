@@ -16,6 +16,35 @@ Run `camp_agent.py` on a cron (e.g. a few times a day) to keep results fresh. Ad
 phone's Home Screen. Every card has a green **Book on Recreation.gov →** button, a **See calendar**
 link, and **Directions**.
 
+## Run with Docker (Dockhand / Portainer / plain compose)
+Clone the repo into your Dockhand instance and bring the stack up — no host Python, no cron, no
+API keys:
+```bash
+docker compose up -d --build      # then open http://<host>:5001/camp  (and /camp/map)
+```
+Two services share one image and a persistent `campsage-data` volume:
+- **`web`** — serves the phone page + map on port **5001** (remap the left side of `"5001:5001"` in
+  `docker-compose.yml` to change the host port).
+- **`scanner`** — runs the scan on start and every `CAMPSAGE_SCAN_INTERVAL_HOURS` (default 6),
+  replacing the cron. Writes `status.json` / `dashboard.html` to the volume that `web` reads.
+
+**Configuration** is all via environment variables — set them in Dockhand's UI, in the compose
+`environment:` block, or copy `.env.example` → `.env`. The common ones:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CAMPSAGE_HOME_NAME` / `CAMPSAGE_HOME_LAT` / `CAMPSAGE_HOME_LNG` | Los Angeles / 34.0522 / -118.2437 | Where "closest" is measured from |
+| `CAMPSAGE_MAX_DISTANCE_MI` | 150 | Drop anything farther than this |
+| `CAMPSAGE_MIN_RATING` / `CAMPSAGE_MIN_REVIEWS` | 4.0 / 4 | Review bars for "good spots" |
+| `CAMPSAGE_WINDOW_DAYS` | 60 | How many days out to search |
+| `CAMPSAGE_WEEKENDS_ONLY` | false | Only blocks including a Fri/Sat night |
+| `CAMPSAGE_SCAN_INTERVAL_HOURS` | 6 | How often the scanner re-runs |
+| `CAMPSAGE_FETCH_IMAGES` | true | Also pull Wikimedia beach/park photos each scan |
+| `CAMPSAGE_DATA_DIR` | `/data` (in Docker) | Where scan output/caches live |
+
+The scanner's first run takes a couple minutes; until it finishes `/camp` shows a "hasn't run yet"
+placeholder. `docker compose logs -f scanner` shows scan progress.
+
 ## The map (`/camp/map`)
 Interactive Leaflet map (OpenStreetMap tiles, **no key**) of every open site — filter by
 type / nights / weekend / sought-after / region; tap a pin for photos, the exact **open dates + site

@@ -1,0 +1,52 @@
+# CampSage — clone this repo into Dockhand and hit "up".
+#
+#   web      serves the phone status page at  http://<host>:5001/camp  (+ /camp/map)
+#   scanner  refreshes results every few hours (recreation.gov + ReserveCalifornia)
+#
+# Both share the `campsage-data` volume: the scanner writes status.json /
+# dashboard.html, the web service reads them. No API keys required.
+# Tune your home base + search in the environment block (or a .env file — see
+# .env.example). Nothing here needs editing to boot with the LA defaults.
+
+services:
+  web:
+    build: .
+    image: campsage:latest
+    container_name: campsage-web
+    restart: unless-stopped
+    ports:
+      - "5001:5001"        # change the LEFT number to remap the host port
+    environment:
+      CAMPSAGE_DATA_DIR: /data
+    volumes:
+      - campsage-data:/data
+    command: python campsage_web.py
+
+  scanner:
+    image: campsage:latest
+    build: .
+    container_name: campsage-scanner
+    restart: unless-stopped
+    depends_on:
+      - web
+    environment:
+      CAMPSAGE_DATA_DIR: /data
+      # ── Home base (where "closest" is measured from) ──
+      CAMPSAGE_HOME_NAME: "Los Angeles"
+      CAMPSAGE_HOME_LAT: "34.0522"
+      CAMPSAGE_HOME_LNG: "-118.2437"
+      # ── Search knobs ──
+      CAMPSAGE_MAX_DISTANCE_MI: "150"
+      CAMPSAGE_MIN_RATING: "4.0"
+      CAMPSAGE_MIN_REVIEWS: "4"
+      CAMPSAGE_WINDOW_DAYS: "60"
+      CAMPSAGE_WEEKENDS_ONLY: "false"
+      # ── How often to re-scan (hours) ──
+      CAMPSAGE_SCAN_INTERVAL_HOURS: "6"
+      CAMPSAGE_FETCH_IMAGES: "true"
+    volumes:
+      - campsage-data:/data
+    command: python scheduler.py
+
+volumes:
+  campsage-data:

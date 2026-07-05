@@ -1,0 +1,14 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.log
+.env
+docs/
+# local scan output / caches — never bake these into the image
+status.json
+wiki_images.json
+social_cache.json
+dashboard.html
+booking_tips.json
+health.json

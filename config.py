@@ -7,18 +7,50 @@ among well-reviewed spots, and publishes a phone-friendly status page.
 
 Everything tunable lives here. Edit + re-run camp_agent.py (or wait for cron).
 """
+import os
 from pathlib import Path
 
+
+# ── Environment overrides ─────────────────────────────────────────────────────
+# Every knob below can be set from the environment (e.g. Docker / Dockhand's UI)
+# without editing this file. If a var is unset, the hard-coded default is used —
+# so local `python3 camp_agent.py` behaves exactly as before.
+def _env_str(name, default):
+    v = os.environ.get(name)
+    return v if v not in (None, "") else default
+
+
+def _env_float(name, default):
+    try:
+        return float(_env_str(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name, default):
+    try:
+        return int(float(_env_str(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_bool(name, default):
+    v = os.environ.get(name)
+    if v in (None, ""):
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "y", "on")
+
+
 # ── Where "closest" is measured from (home base for drive distance) ───────────
-HOME_NAME = "Los Angeles"
-HOME_LAT  = 34.0522
-HOME_LNG  = -118.2437
+HOME_NAME = _env_str("CAMPSAGE_HOME_NAME", "Los Angeles")
+HOME_LAT  = _env_float("CAMPSAGE_HOME_LAT", 34.0522)
+HOME_LNG  = _env_float("CAMPSAGE_HOME_LNG", -118.2437)
 
 # ── How far you'll drive + how good a spot has to be ──────────────────────────
-SEARCH_RADIUS_MI = 150      # recreation.gov search radius (miles)
-MAX_DISTANCE_MI  = 150      # hard cap: drop anything farther than this
-MIN_RATING       = 4.0      # only "good reviews" — average stars >= this
-MIN_REVIEWS      = 4        # ...backed by at least this many ratings (signal, not noise)
+SEARCH_RADIUS_MI = _env_int("CAMPSAGE_SEARCH_RADIUS_MI", 150)   # recreation.gov search radius (miles)
+MAX_DISTANCE_MI  = _env_int("CAMPSAGE_MAX_DISTANCE_MI", 150)    # hard cap: drop anything farther than this
+MIN_RATING       = _env_float("CAMPSAGE_MIN_RATING", 4.0)       # only "good reviews" — average stars >= this
+MIN_REVIEWS      = _env_int("CAMPSAGE_MIN_REVIEWS", 4)          # ...backed by at least this many ratings (signal, not noise)
 
 # A second, lower bar so genuinely great but lightly-reviewed gems still surface,
 # clearly flagged as "few reviews". Set EQUAL to the above to disable the tier.
@@ -26,9 +58,9 @@ SOFT_MIN_RATING  = 4.5      # a 4.5★+ spot with only a couple reviews can stil
 SOFT_MIN_REVIEWS = 1
 
 # ── The trip you want ─────────────────────────────────────────────────────────
-WINDOW_DAYS   = 60          # search this many days out from today
+WINDOW_DAYS   = _env_int("CAMPSAGE_WINDOW_DAYS", 60)   # search this many days out from today
 NIGHTS        = [3, 2]      # acceptable consecutive-night blocks (prefer 3, accept 2)
-WEEKENDS_ONLY = False       # True => only blocks that include a Fri or Sat night
+WEEKENDS_ONLY = _env_bool("CAMPSAGE_WEEKENDS_ONLY", False)   # True => only blocks that include a Fri or Sat night
 
 # ── Beach section (MAINLAND drive-up state beaches via ReserveCalifornia) ─────
 # These are the iconic CA ocean beach campgrounds (Leo Carrillo, San Onofre, Carpinteria,
@@ -96,7 +128,9 @@ STATE_PARK_PER_ANCHOR  = 6      # nearest campable state parks kept per region (
 STATE_PARK_MAX_ANALYZE = 45     # global cap on parks we fetch availability for (API budget)
 
 # ── Plumbing ──────────────────────────────────────────────────────────────────
-DATA_DIR      = Path.home() / "campsage"
+# Where scan output/caches live. In Docker this is set to a mounted volume
+# (CAMPSAGE_DATA_DIR=/data). Unset → the original ~/campsage location.
+DATA_DIR      = Path(_env_str("CAMPSAGE_DATA_DIR", str(Path.home() / "campsage")))
 STATUS_JSON   = DATA_DIR / "status.json"
 DASHBOARD_HTML= DATA_DIR / "dashboard.html"
 TIPS_JSON     = DATA_DIR / "booking_tips.json"   # written by ai_concierge.sh (subscription)
